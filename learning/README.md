@@ -1,6 +1,6 @@
 # Fabric Learning Track
 
-Personal learning notes on a fork of `microsoft/fabric-samples`. All samples run inside a **Microsoft Fabric workspace** (trial capacity is fine), not locally. They depend on Fabric's Spark session, Lakehouse `Files/` and `Tables/` paths, and `sempy`.
+Personal learning notes on a fork of `microsoft/fabric-samples`. Labs run in the **LAB sandbox** (`LAB-Platform-Gold-DEV`: `lh_bronze` → `lh_silver` → `wh_gold`, automated through the `fabric-lab-automation` service principal), not locally. They depend on Fabric's Spark session, Lakehouse `Files/` and `Tables/` paths, and `sempy`.
 
 | Lab | Topic | Sample folder | Status |
 |---|---|---|---|

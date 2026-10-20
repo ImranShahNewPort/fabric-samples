@@ -1,130 +1,108 @@
-# Lab 01: Lakehouse Medallion in Miniature
+# Lab 01: Lakehouse Medallion on the LAB Sandbox
 
-**Goal:** Run Microsoft's Wide World Importers (WWI) Lakehouse tutorial end to end, and understand each cell well enough to rebuild the pattern on NTFB-style data.
+**Goal:** Run Microsoft's Wide World Importers (WWI) Lakehouse tutorial through the LAB sandbox's own medallion layers, `lh_bronze` → `lh_silver` → `wh_gold`, using the service principal for the setup steps.
 
-**Notebooks used** (in `docs-samples/data-engineering/Lakehouse Tutorial Source Code/`)
-- `01 - Create Delta Tables.ipynb`: raw parquet → Delta tables (bronze → silver)
-- `02 - Data Transformation - Business Aggregates.ipynb`: Delta tables → reporting aggregates (silver → gold)
+**Built on (already set up):**
+- Sandbox tenant with Fabric trial capacity
+- Workspaces `LAB-Platform-Gold-DEV` / `LAB-Platform-Gold-PROD` and deployment pipeline `LAB Gold Pipeline`
+- DEV items: `lh_bronze`, `lh_silver`, `wh_gold`, `nb_bronze_to_silver`, `pl_daily_load`
+- Service principal `fabric-lab-automation` (group `FAB-Automation`), Admin on both LAB workspaces
 
-**Time:** about 60–90 minutes
+**Files in this lab** (`learning/lab01/`)
+
+| File | Layer | Adapted from |
+|---|---|---|
+| `WWI-01-bronze-to-silver.ipynb` | Bronze → Silver (Spark) | `docs-samples/.../01 - Create Delta Tables.ipynb` |
+| `WWI-02-silver-to-gold.sql` | Silver → Gold (Warehouse T-SQL) | `docs-samples/.../02 - Data Transformation - Business Aggregates.ipynb` |
+| `Import-WwiNotebook.ps1` | Setup | Imports the notebook through the API as the service principal |
+
+**What changed vs. Microsoft's version**
+- Raw files land in **`lh_bronze`**, not a single `wwilakehouse`.
+- Delta tables are written to **`lh_silver`** with `saveAsTable("lh_silver.<table>")`. Audit columns `SourceSystem` and `LoadedAt` are added, matching the NTFB Gold standard's lineage columns.
+- Gold is built in **`wh_gold`** with T-SQL CTAS over `lh_silver`, instead of Spark writing more lakehouse tables.
+
+**Time:** about 60 minutes
 
 ---
 
-## 0. One-time setup (≈15 min)
+## Step 1. Land raw data in bronze with `pl_daily_load` (≈10 min, portal)
 
-| Step | Action |
-|---|---|
-| 1 | Go to **app.fabric.microsoft.com** with a personal Microsoft account. Start the free **Fabric trial** (profile icon → *Start trial*). |
-| 2 | Create a workspace named `fabric-learning` and assign it to the trial capacity. |
-| 3 | In the workspace, select **New item → Lakehouse** and name it **`wwilakehouse`**. Notebook 02 hard-codes this name. |
-| 4 | Keep *Lakehouse schemas* **off** for this lab. The notebooks write to plain `Tables/<name>` paths. |
-
-## 1. Land the raw data, which is the "source system" (≈10 min)
-
-Both notebooks assume `Files/wwi-raw-data/` already exists. Create it with a Copy pipeline.
-
-1. Select **New item → Pipeline** and name it `IngestDataFromSourceToLakehouse`.
-2. Select **Pipeline activity → Copy data**.
+1. Open `LAB-Platform-Gold-DEV` → `pl_daily_load`.
+2. Select **Pipeline activity → Copy data** and name the activity `Copy WWI to Bronze`.
 3. On the **Source** tab, open **Connection → Browse all → Azure blobs**:
    - URL: `https://fabrictutorialdata.blob.core.windows.net/sampledata/`
    - Connection name: `wwisampledata` · Authentication: **Anonymous**
    - Container: `sampledata` · Directory: `WideWorldImportersDW/parquet`
    - Recursively: ✅ · File format: **Binary**
 4. On the **Destination** tab, set:
-   - Connection: `wwilakehouse` · Root folder: **Files**
+   - Connection: **`lh_bronze`** · Root folder: **Files**
    - Directory: `wwi-raw-data` · File format: **Binary**
-5. Select **Save → Run**. Wait for **Succeeded**, then refresh **Files** in the lakehouse and confirm `wwi-raw-data/full/...` exists.
+5. Select **Save → Run** and wait for **Succeeded**.
+6. Open `lh_bronze`, refresh **Files**, and confirm that `wwi-raw-data/full/` holds folders such as `fact_sale_1y_full` and `dimension_city`.
 
-> **Medallion lens:** `Files/wwi-raw-data` is your **bronze** landing zone. The files are untouched and in their source format.
+> **Medallion lens:** bronze holds the files as received, in their source format and untouched.
 
-## 2. Import the notebooks (≈5 min)
+## Step 2. Import the notebook as the service principal (≈5 min, PowerShell)
 
-1. Download the two `.ipynb` files from your fork on GitHub (open the file → **Download raw file**).
-2. In the workspace, select **Import → Notebook → From this computer** and upload both.
-3. Open each notebook. In the left **Explorer** pane, select **Add data items → Existing lakehouse → `wwilakehouse`** and make it the **default** lakehouse. Relative paths like `Files/` and `Tables/` resolve against the default lakehouse.
+From your Downloads folder, or wherever you saved `learning/lab01/` from the fork:
 
----
-
-## 3. Notebook 01: Create Delta Tables
-
-### Cell 1: Spark session config
-```python
-spark.conf.set("spark.sql.parquet.vorder.enabled", "true")
-spark.conf.set("spark.microsoft.delta.optimizeWrite.enabled", "true")
-spark.conf.set("spark.microsoft.delta.optimizeWrite.binSize", "1073741824")
-```
-- **V-Order** is Fabric-specific parquet sorting and compression. It makes Power BI **Direct Lake** and SQL endpoint reads much faster.
-- **Optimize Write** packs output into fewer, larger files (target about 1 GB) instead of thousands of small ones.
-- *Takeaway:* set these in every write notebook. At the COE level, put them in an **Environment** so nobody has to remember them.
-
-The first cell takes about 1–3 minutes because the Spark session starts up. Later cells run fast.
-
-### Cell 2: `fact_sale`
-- Reads raw parquet, derives `Year`, `Quarter`, and `Month` from `InvoiceDateKey`, and writes a Delta table **partitioned by Year/Quarter**.
-- `mode("overwrite")` makes this a full reload. It's idempotent, so you can rerun it safely.
-
-**Check your work** with a new cell:
-```python
-df = spark.read.table("fact_sale")
-print(df.count())
-display(df.groupBy("Year","Quarter").count().orderBy("Year","Quarter"))
+```powershell
+cd $env:USERPROFILE\Downloads\lab01
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+.\Import-WwiNotebook.ps1 -TenantId '<sandbox tenant id>' -AppId '<app client id>' -Secret '<client secret value>'
 ```
 
-### Cell 3: Dimensions loop
-- One reusable function, `loadFullDataFromSource`, reads, drops the `Photo` blob column, and writes Delta.
-- It loops over 5 dimensions: city, customer, date, employee, and stock_item.
-- *Takeaway:* this is the seed of a **metadata-driven loader**. Replace the hard-coded list with a control table and you have a framework. See `community-samples/Metadata-driven Ingestion Framework/`.
+You should see the workspace and both lakehouse IDs, then `created nb_wwi_bronze_to_silver`. Re-running it updates the notebook in place.
 
-**Check:** refresh **Tables** in the lakehouse. You should see 6 tables. Click one to preview it.
+*Manual fallback:* go to **Import → Notebook → From this computer**, choose the `.ipynb`, then in the Explorer pane add `lh_bronze` (set as default) and `lh_silver`.
 
-> **Medallion lens:** these Delta tables are **silver**. They're typed, cleaned (the unused column is dropped), and queryable by SQL, Spark, and Power BI.
+## Step 3. Run bronze → silver (≈10 min, portal)
 
----
+Open `nb_wwi_bronze_to_silver`. In the Explorer pane, check that **`lh_bronze` is the default** (pinned) and that `lh_silver` is listed. Then run the cells in order.
 
-## 4. Notebook 02: Business Aggregates
-
-### Cell 1: Same Spark config as notebook 01.
-
-### Cells 2–3: Approach #1 (PySpark DataFrame API)
-- Loads `fact_sale`, `dimension_date`, and `dimension_city` as DataFrames.
-- Joins fact to dimensions on their keys, groups by date and city, sums the four money columns, renames `sum(...)` columns to friendly names, and writes `aggregate_sale_by_date_city`.
-- `overwriteSchema=true` lets you change the shape of a gold table without dropping it first.
-
-### Cells 4–5: Approach #2 (Spark SQL)
-- `%%sql` builds a temp view joining fact, date, and employee with a `GROUP BY`.
-- The next cell reads the view with `spark.sql(...)` and writes `aggregate_sale_by_date_employee`.
-- *Takeaway:* both approaches produce the same kind of output. Choose by team skill. SQL-first analysts (most BI teams) can work in `%%sql`, and engineers can use PySpark. Both compile to the same Spark plan.
-
-> **Medallion lens:** the two `aggregate_*` tables are **gold**. They're pre-joined, business-named, and sized for reporting.
-
----
-
-## 5. See it end to end (≈10 min)
-
-1. Open the lakehouse and switch to the **SQL analytics endpoint** in the top-right toggle. Run:
-   ```sql
-   SELECT TOP 10 City, SUM(SumOfProfit) AS Profit
-   FROM aggregate_sale_by_date_city
-   GROUP BY City ORDER BY Profit DESC;
-   ```
-2. Select **New semantic model**, pick the two gold tables, and create a quick Power BI report. It runs in **Direct Lake** mode with no import refresh.
-
----
-
-## 6. Stretch exercises: make it NTFB-shaped
-
-| # | Exercise | What it teaches |
+| Cell | What it does | Why it matters |
 |---|---|---|
-| A | Change notebook 01 to **append** with a `LoadDate` column instead of overwriting. | Incremental loads and audit columns |
-| B | Replace the overwrite in cell 2 with a Delta **MERGE** keyed on `SaleKey`. | Upserts, which is how a D365 → lakehouse sync would behave |
-| C | Upload a small CSV of your own (for example, mock agency or partner distributions) to `Files/ntfb-raw/` and build bronze → silver → gold for it. | Applying the pattern to your domain |
-| D | Move the `full_tables` list into a Delta control table and loop over it. | Metadata-driven ingestion |
-| E | Run `OPTIMIZE fact_sale` and `DESCRIBE HISTORY fact_sale` in `%%sql`. | Delta maintenance and time travel |
-| F | Create a second workspace `fabric-learning-prod` and try **Deployment pipelines**. | Dev → Prod promotion for the COE |
+| 1 · Spark config | Turns on V-Order and Optimize Write | Fast Direct Lake and SQL reads, and fewer small files. At NTFB, set these once in a Fabric **Environment**. |
+| 2 · Fact Sale | Reads `Files/wwi-raw-data/full/fact_sale_1y_full`, adds Year/Quarter/Month and audit columns, and writes `lh_silver.fact_sale` partitioned by Year/Quarter | A relative path reads from the **default** lakehouse, and a two-part name writes to the **other** one. That's the core cross-lakehouse pattern. |
+| 3 · Dimensions | One function loops over 5 dimension folders, drops `Photo`, and writes to silver | This is the seed of a metadata-driven loader. |
+| 4 · Checks | Row counts by Year/Quarter, plus `DESCRIBE HISTORY` | Delta keeps a version log, which gives you time travel and auditing. |
 
-## 7. Clean up
-Trial capacity costs nothing and can't be paused. When you finish the series, delete the `fabric-learning` workspace to remove everything.
+The first cell takes 1–3 minutes while Spark starts.
+
+**Verify:** open `lh_silver` → **Tables**. There should be 6 tables.
+
+> **Medallion lens:** silver means typed Delta tables with lineage columns that SQL, Spark and Power BI can all query.
+
+## Step 4. Build gold in the Warehouse (≈10 min, portal)
+
+1. Open `wh_gold`. In the Explorer pane, select **+ Warehouses**, tick **`lh_silver`** and confirm. This lets `wh_gold` query it by name.
+2. Select **New SQL query**, paste all of `WWI-02-silver-to-gold.sql`, and run it.
+3. The final `SELECT` returns the top 10 cities by profit.
+
+| Statement | What it does |
+|---|---|
+| `DROP TABLE IF EXISTS` + `CREATE TABLE … AS SELECT` | A full rebuild of each gold table, so it's safe to rerun |
+| `lh_silver.dbo.fact_sale` | A cross-database query from the Warehouse into the Lakehouse SQL endpoint, with no data copy |
+| Two aggregates | `aggregate_sale_by_date_city` and `aggregate_sale_by_date_employee`, the same outputs as Microsoft's notebook 02 |
+
+> **Medallion lens:** gold means pre-joined, business-named tables served from the Warehouse, the same pattern as your `fact_monthly_lbs`.
+
+## Step 5. Report and promote (≈10 min, portal)
+
+1. In `wh_gold`, select **New semantic model** and pick both `aggregate_*` tables. This creates a **Direct Lake** model.
+2. Build a quick report showing Profit by SalesTerritory and month.
+3. Open **LAB Gold Pipeline** and select **Deploy** DEV → PROD. Note which items deploy and which need their data rebuilt in PROD. That gap is the lesson.
 
 ---
 
-**Next lab:** `docs-samples/data-engineering/Notebook/GreenTripData/DataEngineeringStarterKit.ipynb`, a 52-cell deeper PySpark tour.
+## Stretch exercises (NTFB-shaped)
+
+| # | Exercise | Teaches |
+|---|---|---|
+| A | In cell 2, swap overwrite for a Delta **MERGE** on `SaleKey` | Upserts, which is how a D365 → silver sync behaves |
+| B | Add a step to `pl_daily_load` after the copy that runs `nb_wwi_bronze_to_silver`, then a **Script** activity that runs the gold SQL against `wh_gold` | End-to-end orchestration |
+| C | Rebuild gold as a proper star: `dim.City` and `dim.Date` with integer surrogate keys, plus `fact.Sale` | NTFB Gold naming standard (PascalCase, `dim.`/`fact.` schemas, `<Entity>Key`) |
+| D | Move the dimension list into a `lh_silver.etl_control` table and loop over it | Metadata-driven ingestion (see `community-samples/Metadata-driven Ingestion Framework/`) |
+| E | Extend `Import-WwiNotebook.ps1` to also run the notebook through the Jobs API (`POST …/items/{id}/jobs/instances?jobType=RunNotebook`) | Fully programmatic runs as the service principal |
+
+**Next lab:** `docs-samples/data-engineering/Notebook/GreenTripData/DataEngineeringStarterKit.ipynb`
