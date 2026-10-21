@@ -4,7 +4,7 @@ Personal learning notes on a fork of `microsoft/fabric-samples`. Labs run in the
 
 | Lab | Topic | Sample folder | Status |
 |---|---|---|---|
-| [01](LAB-01-lakehouse-medallion.md) | Lakehouse medallion: raw → Delta → aggregates | `docs-samples/data-engineering/Lakehouse Tutorial Source Code/` | ⬜ |
+| [01](LAB-01-lakehouse-medallion.md) | Lakehouse medallion: raw → Delta → aggregates | `docs-samples/data-engineering/Lakehouse Tutorial Source Code/` | 🟡 silver ✅ · gold · deploy · star |
 | 02 | Data Engineering Starter Kit (PySpark deep dive) | `docs-samples/data-engineering/Notebook/GreenTripData/` | ⬜ |
 | 03 | Materialized Lake Views (declarative silver/gold) | `docs-samples/data-engineering/MaterializedLakeViews/` | ⬜ |
 | 04 | Semantic Link: notebooks ↔ Power BI models | `features-samples/semantic-link/` | ⬜ |

@@ -101,7 +101,7 @@ The first cell takes 1–3 minutes while Spark starts.
 |---|---|---|
 | A | In cell 2, swap overwrite for a Delta **MERGE** on `SaleKey` | Upserts, which is how a D365 → silver sync behaves |
 | B | Add a step to `pl_daily_load` after the copy that runs `nb_wwi_bronze_to_silver`, then a **Script** activity that runs the gold SQL against `wh_gold` | End-to-end orchestration |
-| C | Rebuild gold as a proper star: `dim.City` and `dim.Date` with integer surrogate keys, plus `fact.Sale` | NTFB Gold naming standard (PascalCase, `dim.`/`fact.` schemas, `<Entity>Key`) |
+| C | Rebuild gold as a proper star with `lab01/WWI-03-gold-star-schema.sql`: `dim.Date`, `dim.City`, `dim.Customer`, `dim.Employee`, `dim.StockItem` (SCD2, unknown member -1), plus `fact.Sale` | NTFB Gold naming standard (PascalCase, `dim.`/`fact.` schemas, `<Entity>Key`/`<Entity>Id`, lineage) |
 | D | Move the dimension list into a `lh_silver.etl_control` table and loop over it | Metadata-driven ingestion (see `community-samples/Metadata-driven Ingestion Framework/`) |
 | E | Extend `Import-WwiNotebook.ps1` to also run the notebook through the Jobs API (`POST …/items/{id}/jobs/instances?jobType=RunNotebook`) | Fully programmatic runs as the service principal |
 
